@@ -14,7 +14,7 @@ import UIKit
 #endif
 
 public protocol MotionSessionDelegate: AnyObject {
-    func didReceiveMotionData(_ data: MotionData)
+    func didReceiveMotionData(_ data: MotionData, from peerID: MCPeerID)
 }
 
 public struct MotionData: Codable {
@@ -30,11 +30,13 @@ public struct MotionData: Codable {
 public final class MotionSession: NSObject, ObservableObject {
     @Published public var connectedPeers: [MCPeerID] = []
     
+    public var myPeerID: MCPeerID { myPeerId }
+    
     private let serviceType = "motionsync"
     #if os(macOS)
     private let myPeerId = MCPeerID(displayName: Host.current().localizedName ?? UUID().uuidString)
     #elseif os(iOS)
-    private let myPeerId = MCPeerID(displayName: UIDevice.current.name)
+    private let myPeerId = MCPeerID(displayName: "\(UIDevice.current.name)-\(UUID().uuidString.prefix(4))")
     #else
     private let myPeerId = MCPeerID(displayName: UUID().uuidString)
     #endif
@@ -110,7 +112,7 @@ extension MotionSession: MCSessionDelegate, MCNearbyServiceAdvertiserDelegate, M
     public func session(_ session: MCSession, didReceive data: Data, fromPeer peerID: MCPeerID) {
         if let motionData = try? JSONDecoder().decode(MotionData.self, from: data) {
             // print("📦 [SESSION] Dados recebidos de \(peerID.displayName)") // Comentado para não spammar
-            delegate?.didReceiveMotionData(motionData)
+            delegate?.didReceiveMotionData(motionData, from: peerID)
         }
     }
 

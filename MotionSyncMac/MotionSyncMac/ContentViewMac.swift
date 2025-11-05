@@ -8,10 +8,73 @@
 import SwiftUI
 import MotionSyncCore
 import Combine
+import MultipeerConnectivity
+
+class PeersState: ObservableObject {
+    @Published var peerPositions: [String: CGPoint] = [:]
+}
+
+class ContentViewModel: ObservableObject, MotionSessionDelegate {
+    @Published var session = MotionSession()
+    @Published var peersState = PeersState()
+    @Published var screenSize: CGSize = .zero
+    
+    // Velocity dictionary to keep velocity per peer for inertia handling
+    @Published var peerVelocities: [String: CGPoint] = [:]
+    
+    // Local peer fixed position for testing
+    let localPeerPosition = CGPoint(x: 400, y: 400)
+    
+    // Sensitivity and damping constants
+    private let sensitivity: CGFloat = 25
+    private let damping: CGFloat = 0.9
+    
+    // Computed property to get all peers including local
+    var allPeers: [MCPeerID] {
+        [session.myPeerID] + session.connectedPeers
+    }
+    
+    func onAppear(with size: CGSize) {
+        screenSize = size
+        session.delegate = self
+        session.startBrowsing()
+    }
+    
+    func didReceiveMotionData(_ data: MotionData, from peerID: MCPeerID) {
+        DispatchQueue.main.async {
+            let peerName = peerID.displayName
+            
+            // Get current position, default center of screen
+            let currentPosition = self.peersState.peerPositions[peerName] ?? CGPoint(x: self.screenSize.width / 2, y: self.screenSize.height / 2)
+            // Get current velocity or zero
+            let currentVelocity = self.peerVelocities[peerName] ?? CGPoint.zero
+            
+            // Update velocity based on motion data and sensitivity
+            var newVelocity = currentVelocity
+            newVelocity.x += CGFloat(data.roll) * self.sensitivity
+            newVelocity.y -= CGFloat(data.pitch) * self.sensitivity
+            
+            // Apply damping (inertia)
+            newVelocity.x *= self.damping
+            newVelocity.y *= self.damping
+            
+            // Update position
+            var newX = currentPosition.x + newVelocity.x
+            var newY = currentPosition.y + newVelocity.y
+            
+            // Clamp position within screen bounds with 50pt margin
+            newX = max(50, min(self.screenSize.width - 50, newX))
+            newY = max(50, min(self.screenSize.height - 50, newY))
+            
+            // Save updated velocity and position
+            self.peerVelocities[peerName] = newVelocity
+            self.peersState.peerPositions[peerName] = CGPoint(x: newX, y: newY)
+        }
+    }
+}
 
 struct ContentView: View {
-    @StateObject private var delegate = MotionDelegate()
-    @StateObject private var session = MotionSession()
+    @StateObject private var viewModel = ContentViewModel()
     
     var body: some View {
         GeometryReader { geometry in
@@ -19,44 +82,39 @@ struct ContentView: View {
                 Color.black.ignoresSafeArea()
                 
                 VStack {
-                    Text("Conectado: \(session.connectedPeers.count) peer(s)")
+                    Text("Conectado: \(viewModel.session.connectedPeers.count) peer(s)")
                         .foregroundColor(.white)
                         .padding()
                     
                     Spacer()
                 }
                 
+                ForEach(viewModel.session.connectedPeers, id: \.self) { peer in
+                    let position = viewModel.peersState.peerPositions[peer.displayName]
+                        ?? CGPoint(x: viewModel.screenSize.width / 2, y: viewModel.screenSize.height / 2)
+                    let colors: [Color] = [.yellow, .blue,  .pink, .purple, .cyan, .white]
+                    let color = colors[abs(peer.displayName.hashValue) % colors.count]
+
+                    Rectangle()
+                        .fill(color)
+                        .frame(width: 100, height: 100)
+                        .position(position)
+                        .overlay(
+                            Text(peer.displayName)
+                                .foregroundColor(.black)
+                        )
+                }
+
+                // quadrado do próprio Mac
                 Rectangle()
-                    .fill(Color.yellow)
+                    .fill(Color.green)
                     .frame(width: 100, height: 100)
-                    .position(delegate.position)
+                    .position(viewModel.localPeerPosition)
+                    .overlay(Text("Mac").foregroundColor(.black))
             }
             .onAppear {
-                session.delegate = delegate
-                delegate.screenSize = geometry.size
-                session.startBrowsing()
+                viewModel.onAppear(with: geometry.size)
             }
-        }
-    }
-}
-
-final class MotionDelegate: ObservableObject, MotionSessionDelegate {
-    @Published var position = CGPoint(x: 400, y: 400)
-    var screenSize: CGSize = .zero
-    
-    func didReceiveMotionData(_ data: MotionData) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Atualiza posição com base no movimento
-            var newX = self.position.x + CGFloat(data.roll * 15)
-            var newY = self.position.y - CGFloat(data.pitch * 15)
-            
-            // Limita aos bounds da tela (com margem de 50 pixels do quadrado)
-            newX = max(50, min(self.screenSize.width - 50, newX))
-            newY = max(50, min(self.screenSize.height - 50, newY))
-            
-            self.position = CGPoint(x: newX, y: newY)
         }
     }
 }
